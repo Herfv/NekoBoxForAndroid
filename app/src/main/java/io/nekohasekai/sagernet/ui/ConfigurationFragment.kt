@@ -550,33 +550,34 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         suspend fun update(profile: ProxyEntity) {
             fragment?.configurationListView?.post {
+                val context = context ?: return@post
+                if (!isAdded) return@post
+
                 var profileStatusText: String? = null
                 var profileStatusColor = 0
 
                 when (profile.status) {
                     -1 -> {
                         profileStatusText = profile.error
-                        profileStatusColor =
-                            requireContext().getColorAttr(android.R.attr.textColorSecondary)
+                        profileStatusColor = context.getColorAttr(android.R.attr.textColorSecondary)
                     }
                     0 -> {
                         profileStatusText = getString(R.string.connection_test_testing)
-                        profileStatusColor =
-                            requireContext().getColorAttr(android.R.attr.textColorSecondary)
+                        profileStatusColor = context.getColorAttr(android.R.attr.textColorSecondary)
                     }
                     1 -> {
                         profileStatusText = getString(R.string.available, profile.ping)
-                        profileStatusColor = requireContext().getColour(R.color.material_green_500)
+                        profileStatusColor = context.getColour(R.color.material_green_500)
                     }
                     2 -> {
                         profileStatusText = profile.error
-                        profileStatusColor = requireContext().getColour(R.color.material_red_500)
+                        profileStatusColor = context.getColour(R.color.material_red_500)
                     }
                     3 -> {
                         val err = profile.error ?: ""
                         val msg = Protocols.genFriendlyMsg(err)
                         profileStatusText = if (msg != err) msg else getString(R.string.unavailable)
-                        profileStatusColor = requireContext().getColour(R.color.material_red_500)
+                        profileStatusColor = context.getColour(R.color.material_red_500)
                     }
                 }
 
@@ -585,7 +586,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     append("\n")
                     append(
                         profile.displayType(),
-                        ForegroundColorSpan(requireContext().getProtocolColor(profile.type)),
+                        ForegroundColorSpan(context.getProtocolColor(profile.type)),
                         SPAN_EXCLUSIVE_EXCLUSIVE
                     )
                     append(" ")
@@ -625,7 +626,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             val profiles = ConcurrentLinkedQueue(profilesUnfiltered)
             val testPool = newFixedThreadPoolContext(
                 DataStore.connectionTestConcurrent,
-                "Connection test pool"
+                "pingTest"
             )
             repeat(DataStore.connectionTestConcurrent) {
                 testJobs.add(launch(testPool) {
@@ -749,6 +750,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
     fun urlTest() {
         val test = TestDialog()
         val dialog = test.builder.show()
@@ -763,10 +765,13 @@ class ConfigurationFragment @JvmOverloads constructor(
             val profilesUnfiltered = SagerDatabase.proxyDao.getByGroup(group.id)
             test.proxyN = profilesUnfiltered.size
             val profiles = ConcurrentLinkedQueue(profilesUnfiltered)
-            val urlTest = UrlTest() // note: this is NOT in bg process
-
+            val testPool = newFixedThreadPoolContext(
+                DataStore.connectionTestConcurrent,
+                "urlTest"
+            )
             repeat(DataStore.connectionTestConcurrent) {
-                testJobs.add(launch {
+                testJobs.add(launch(testPool) {
+                    val urlTest = UrlTest() // note: this is NOT in bg process
                     while (isActive) {
                         val profile = profiles.poll() ?: break
                         profile.status = 0
@@ -1277,15 +1282,19 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             override suspend fun onUpdated(data: TrafficData) {
-                val index = configurationIdList.indexOf(data.id)
-                if (index != -1) {
-                    val holder = layoutManager.findViewByPosition(index)
-                        ?.let { configurationListView.getChildViewHolder(it) } as ConfigurationHolder?
-                    if (holder != null) {
-                        onMainDispatcher {
-                            holder.bind(holder.entity, data)
+                try {
+                    val index = configurationIdList.indexOf(data.id)
+                    if (index != -1) {
+                        val holder = layoutManager.findViewByPosition(index)
+                            ?.let { configurationListView.getChildViewHolder(it) } as ConfigurationHolder?
+                        if (holder != null) {
+                            onMainDispatcher {
+                                holder.bind(holder.entity, data)
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    Logs.w(e)
                 }
             }
 
